@@ -3,7 +3,7 @@ _OSVERSION = "Lazuli " .. _LAZULI_VERSION
 
 -- The scheduler is the core.
 
-local spark, schedule, next_scheduled, higher_scheduled, get_process
+local spark, schedule, next_scheduled, higher_scheduled, get_process, dealloc_process
 
 do -- Note that O() declarations ignore memory allocation.
 	local active_priorities = {}
@@ -14,9 +14,11 @@ do -- Note that O() declarations ignore memory allocation.
 		for i, v in ipairs(active_priorities) do
 			if v <= priority then
 				assert(v ~= priority, "activate_queue on active queue")
-				table.insert(active_priority, i, priority)
+				table.insert(active_priorities, i, priority)
+				return
 			end
 		end
+		table.insert(active_priorities, priority)
 	end
 	local function deactivate_queue(priority) -- O(n)
 		for i, v in ipairs(active_priorities) do
@@ -98,6 +100,10 @@ do -- Note that O() declarations ignore memory allocation.
 	function get_process(pid)
 		return processes[pid]
 	end
+	function dealloc_process(proc)
+		assert(not proc.queued, "cannot deallocate a queued process")
+		processes[proc.pid] = nil
+	end
 end
 
 local function generate_environment(api)
@@ -134,12 +140,16 @@ local function generate_environment(api)
 	env.coroutine = {}
 	env.coroutine.create = coroutine.create
 	-- first parameter in actual coroutine yield is if the yield is a process-yield
-	local function handle_yield_ret(co, is_process_yield, ...)
-		if is_process_yield then
-			coroutine.yield(true)
-			return handle_yield_ret(co, coroutine.resume(co))
+	local function handle_yield_ret(co, success, is_process_yield, ...)
+		if success then
+			if is_process_yield then
+				coroutine.yield(true)
+				return handle_yield_ret(co, coroutine.resume(co))
+			else
+				return ...
+			end
 		else
-			return ...
+			error("coroutine failure: " .. is_process_yield) -- is_process_yield has the error in this case
 		end
 	end
 	function env.coroutine.resume(co, ...)
@@ -193,6 +203,7 @@ end
 
 local active_process
 local timeslice_ticks
+local shutdown_allowed = false
 local api = {}
 -- api MUST ONLY BE A TABLE OF FUNCTIONS
 
@@ -250,18 +261,38 @@ end
 function api.process_block()
 	coroutine.yield(true)
 end
+function api.halt()
+	assert(active_process.user_id == 0, "must be root to halt")
+	shutdown_allowed = true
+end
 
 spawn_outer([[
 	print("== init script ==")
-	print("pid is", api.get_pid())
-	print("uid is", api.get_uid())
-	print(api.get_param())
+	print("test", lazuli.get_pid)
+	print("pid is", lazuli.get_pid())
+	print("uid is", lazuli.get_uid())
+	print(lazuli.get_param())
+	print("== end of init ==")
+	lazuli.halt()
 ]], "init", 0, 0, "HELLO WORLD")
 
 -- scheduler loop
-while true do
+while get_process(0) do
 	active_process = next_scheduled()
 	assert(active_process, "scheduler deadlock")
 	timeslice_ticks = 10
-	coroutine.resume(active_process.coroutine)
+	shutdown_allowed = false
+	local success, err = coroutine.resume(active_process.coroutine)
+	if not success then
+		-- TODO: proper error handling
+		print("process", active_process.pid, "crashed:", err)
+	end
+	if coroutine.status(active_process.coroutine) == "dead" then
+		dealloc_process(active_process)
+	end
+end
+if shutdown_allowed then
+	print("system halted")
+else
+	error("process 0 killed - crashed")
 end
