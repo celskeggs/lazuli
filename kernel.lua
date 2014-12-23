@@ -66,12 +66,12 @@ do -- Note that O() declarations ignore memory allocation.
 	end
 
 	local processes = {}
-	last_pid = 0
+	local next_pid = 0
 	function spark(main_function, priority, user_id, param)
 		local routine = coroutine.create(main_function)
 		local structure = {coroutine=routine, user_id=user_id, priority=priority, queued=false, param=param}
-		last_pid = last_pid + 1
-		structure.pid = last_pid
+		structure.pid = next_pid
+		next_pid = next_pid + 1
 		processes[structure.pid] = structure
 		schedule(structure.pid)
 		return structure.pid
@@ -80,7 +80,7 @@ do -- Note that O() declarations ignore memory allocation.
 		local proc = processes[pid]
 		assert(proc, "schedule on nonexistent process")
 		assert(not proc.queued, "schedule on scheduled process")
-		insert_queue(proc.queue, proc)
+		insert_queue(proc.priority, proc)
 		proc.queued = true
 	end
 	function next_scheduled()
@@ -218,9 +218,17 @@ function api.set_far_uid(pid, uid)
 	assert(proc, "process does not exist")
 	proc.user_id = uid
 end
-function api.spawn(code, chunkname, priority, param)
+function spawn_outer(code, chunkname, priority, user_id, param)
 	local env = generate_environment(api)
-	return spark(load(code, chunkname, "s", env), priority, active_process.user_id, param)
+	local f, err = load(code, chunkname, "t", env)
+	if f then
+		return spark(f, priority, user_id, param)
+	else
+		error("could not load chunk " .. chunkname .. ": " .. err)
+	end
+end
+function api.spawn(code, chunkname, priority, param)
+	return spawn_outer(code, chunkname, priority, active_process.user_id, param)
 end
 function api.schedule(pid)
 	schedule(pid)
@@ -242,6 +250,13 @@ end
 function api.process_block()
 	coroutine.yield(true)
 end
+
+spawn_outer([[
+	print("== init script ==")
+	print("pid is", api.get_pid())
+	print("uid is", api.get_uid())
+	print(api.get_param())
+]], "init", 0, 0, "HELLO WORLD")
 
 -- scheduler loop
 while true do
