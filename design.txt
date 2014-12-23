@@ -1,0 +1,75 @@
+# LAZULI: A Lua-based OpenComputers RTOS
+
+* Multitasking
+  * Cooperative
+  * With priorities
+  * IPC
+  * Synchronization
+* Drivers
+* Filesystem
+* Simple shell
+* Networking
+* Real-time debugging
+* Security
+* Remote access
+
+
+# Multitasking is the core of an RTOS.
+
+The scheduler keeps a queue of processes for each priority level.
+A process of one priority level will always run before any process of a lower priority level.
+Processes of the same priority level get round-robin scheduling.
+
+Priorities are arbitrary numbers.
+
+Whenever a program yields, this is taken as a hint to possibly schedule a different process instead.
+Standard coroutine functionality still works - the provided coroutine functions are faked so that they'll yield differently in some cases.
+
+A process has a few attributes:
+* Top-level coroutine
+* User ID
+* Priority
+* Current queue
+
+If a process is in a queue, then it will run at some point in the near future.
+If a process is not in a queue, then it is blocked and will be woken at some point in the future.
+
+To block, a process registers itself for wakeup in some fashion, and then uses an API call to yield without being queued.
+
+For userspace, processes are seen only as process IDs and through API calls.
+
+
+# Inter-process communication is also important.
+
+The most fundamental method of IPC is shared memory... this is really easy in Lua.
+
+This works by creating a table to be shared, and then transmitting it over an existing connection to the target process.
+
+
+# On top of shared memory, we build message queues.
+
+A message queue is a table used as a queue, with a process identifier.
+
+To send a message, it is inserted into the table, and then any target process(es) is (are) woken by a system API call.
+
+To receive a message asynchronously, the table is checked for contents. If any contents are found, the first one is removed.
+
+To block on a message: The process adds itself to the wake-up set, and then loops until there is something in the table. Then it removes the found entry and removes itself from the wake-up set.
+
+
+# Procedure calls are built on top of message queues.
+
+A procedure call structure contains a process ID to wake up, some arguments, a slot to put the return value into, and a flag for if the function has returned.
+
+This structure is placed into the message queue.
+
+
+# Mutexes (binary semaphores) are the basic synchronization mechanism.
+
+A mutex has an actively holding process (or nil if released) and a list of waiting processes.
+
+To acquire a mutex: If the mutex is being held, add self to list of waiting processes. While still being held, perform a blocking yield.
+Once available, remove self from list of waiting processes and set self as holder.
+
+To release a mutex: Assert that the current process holds the mutex. Set the holding process to nil.
+Wake up the waiting processes.
