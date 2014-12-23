@@ -71,7 +71,7 @@ do -- Note that O() declarations ignore memory allocation.
 	local next_pid = 0
 	function spark(main_function, priority, user_id, param)
 		local routine = coroutine.create(main_function)
-		local structure = {coroutine=routine, user_id=user_id, priority=priority, queued=false, param=param}
+		local structure = {coroutine=routine, user_id=user_id, priority=priority, queued=false, param=param, event_queue={}}
 		structure.pid = next_pid
 		next_pid = next_pid + 1
 		processes[structure.pid] = structure
@@ -105,6 +105,68 @@ do -- Note that O() declarations ignore memory allocation.
 		processes[proc.pid] = nil
 	end
 end
+
+-- Timer and event subsystems
+
+local event_check, event_sleep, event_register, event_unregister
+do
+	local event_registry = {}
+	function event_sleep(timeout)
+		local data = table.pack(computer.pullSignal(timeout))
+		if data.n > 0 then
+			local target = event_registry[data[1]]
+			if target then
+				table.insert(get_process(target).event_queue, data)
+				schedule(target)
+			end
+		end
+	end
+	function event_check()
+		event_sleep(0)
+	end
+	function event_register(name, pid)
+		assert(event_registry[name] == nil, "event already registered: " .. name)
+		event_registry[name] = pid
+	end
+	function event_unregister(name, pid)
+		assert(event_registry[name] == pid, "event not registered: " .. name)
+		event_registry[name] = nil
+	end
+end
+
+local timer_start, timer_check, timer_delete, timer_sleep
+do
+	local timers = {}
+	function timer_start(time, pid)
+		timers[pid] = computer.uptime() + time
+	end
+	function timer_delete(pid)
+		timers[pid] = nil
+	end
+	function timer_check() -- TODO: make this faster
+		local now = computer.uptime()
+		local expired = {}
+		local nextat
+		for pid, when in pairs(timers) do
+			if when <= now then
+				table.insert(expired, pid)
+			elseif nextat == nil or when < nextat then
+				nextat = when
+			end
+		end
+		for _, pid in ipairs(expired) do
+			timers[pid] = nil
+			schedule(pid)
+		end
+		return nextat
+	end
+	function timer_sleep()
+		local nextat = timer_check()
+		event_sleep(nextat - computer.uptime())
+	end
+end
+
+-- sandbox subsystem
 
 local function generate_environment(api)
 	local env = {}
@@ -181,7 +243,7 @@ local function generate_environment(api)
 		env.string[name] = string[name]
 	end
 	env.table = {}
-	for _, name in ipairs({"insert", "maxn", "remove", "sort"}) do
+	for _, name in ipairs({"insert", "remove", "sort", "concat", "pack", "unpack"}) do
 		env.table[name] = table[name]
 	end
 	env.math = {}
@@ -190,6 +252,11 @@ local function generate_environment(api)
 		            "ldexp", "log", "log10", "max", "min", "modf", "pi", "pow",
 					"rad", "random", "randomseed", "sin", "sinh", "sqrt", "tan", "tanh"}) do
 		env.math[name] = math[name]
+	end
+	env.bit32 = {}
+	for _, name in ipairs({"arshift", "band", "bnot", "bor", "btest", "bxor", "extract",
+		                   "replace", "lrotate", "lshift", "rrotate", "rshift"}) do
+		env.bit32[name] = bit32[name]
 	end
 	env.os = {}
 	env.os.time = os.time
@@ -200,6 +267,8 @@ local function generate_environment(api)
 	end
 	return env
 end
+
+-- Lazuli API subsystem
 
 local active_process
 local timeslice_ticks
@@ -216,8 +285,24 @@ end
 function api.get_param()
 	return active_process.param
 end
+function api.register_event(name)
+	event_register(name, active_process.pid)
+end
+function api.unregister_event(name)
+	event_unregister(name, active_process.pid)
+end
 function api.get_priority()
 	return active_process.priority
+end
+function api.pop_event()
+	if active_process.event_queue[1] then
+		return table.remove(active_process.event_queue, 1)
+	end
+end
+function api.block_event()
+	while not active_process.event_queue[1] do
+		api.process_block()
+	end
 end
 function api.set_uid(uid)
 	assert(active_process.user_id == 0, "root access required")
@@ -251,6 +336,7 @@ function api.process_yield()
 end
 -- Yield if enough time has been spent.
 function api.check_process_yield()
+	timer_check()
 	if higher_scheduled(active_process.priority) or timeslice_ticks <= 0 then
 		api.process_yield()
 	else
@@ -272,23 +358,36 @@ spawn_outer([[
 	print("pid is", lazuli.get_pid())
 	print("uid is", lazuli.get_uid())
 	print(lazuli.get_param())
+	print("== event test ==")
+	lazuli.register_event("key_down")
+	print("waiting for key_down")
+	lazuli.block_event()
+	local event = lazuli.pop_event()
+	print("got", event[1], event[2], event[3], event[4], event[5], event[6])
+	lazuli.unregister_event("key_down")
 	print("== end of init ==")
 	lazuli.halt()
 ]], "init", 0, 0, "HELLO WORLD")
 
 -- scheduler loop
 while get_process(0) do
+	timer_check()
+	event_check()
+
 	active_process = next_scheduled()
-	assert(active_process, "scheduler deadlock")
-	timeslice_ticks = 10
-	shutdown_allowed = false
-	local success, err = coroutine.resume(active_process.coroutine)
-	if not success then
-		-- TODO: proper error handling
-		print("process", active_process.pid, "crashed:", err)
-	end
-	if coroutine.status(active_process.coroutine) == "dead" then
-		dealloc_process(active_process)
+	if not active_process then
+		timer_sleep()
+	else
+		timeslice_ticks = 10
+		shutdown_allowed = false
+		local success, err = coroutine.resume(active_process.coroutine)
+		if not success then
+			-- TODO: proper error handling
+			print("process", active_process.pid, "crashed:", err)
+		end
+		if coroutine.status(active_process.coroutine) == "dead" then
+			dealloc_process(active_process)
+		end
 	end
 end
 if shutdown_allowed then
