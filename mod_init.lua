@@ -2,11 +2,10 @@ function print(...)
 	lazuli.broadcast("cast_term", ...)
 end
 
+print(_OSVERSION)
 print("== mod_init.lua ==")
-print("test", lazuli.get_pid)
 print("pid is", lazuli.get_pid())
 print("uid is", lazuli.get_uid())
-print(lazuli.get_param())
 print("HELLO", "WORLD")
 print("== event test ==")
 lazuli.register_event("key_down")

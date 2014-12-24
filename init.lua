@@ -1,19 +1,6 @@
 _LAZULI_VERSION = "0.1.0"
 _OSVERSION = "Lazuli " .. _LAZULI_VERSION
 
--- debugging
-
-local gpu = component.list("gpu")()
-local cursorY = 1
-function print(...)
-	local args = table.pack(...)
-	for i = 1, args.n do
-		args[i] = tostring(args[i])
-	end
-	component.invoke(gpu, "set", 1, cursorY, table.concat(args, " ", 1, args.n))
-	cursorY = cursorY + 1
-end
-
 -- The scheduler is the core.
 
 local spark, schedule, next_scheduled, higher_scheduled, get_process, dealloc_process, processes_exist
@@ -128,7 +115,7 @@ do -- Note that O() declarations ignore memory allocation.
 	end
 end
 
--- Timer and event subsystems
+-- event subsystem
 
 local event_check, event_sleep, event_register, event_unregister, event_send
 do
@@ -140,10 +127,12 @@ do
 			if proc then
 				table.insert(proc.event_queue, evt)
 				schedule(target)
+				return true
 			else
 				event_unregister(data[1], target)
 			end
 		end
+		return false
 	end
 	function event_sleep(timeout)
 		local data = table.pack(computer.pullSignal(timeout))
@@ -162,8 +151,9 @@ do
 			assert(proc, "send to nonexistent process")
 			table.insert(proc.event_queue, data)
 			schedule(pid)
+			return true
 		else
-			event_handle(data)
+			return event_handle(data)
 		end
 	end
 	function event_register(name, pid)
@@ -175,6 +165,24 @@ do
 		event_registry[name] = nil
 	end
 end
+
+-- debugging
+
+local gpu = component.list("gpu")()
+local cursorY = 1
+function print(...)
+	if event_send(nil, nil, "debug_print", ...) then
+		return
+	end
+	local args = table.pack("[debug]", ...)
+	for i = 1, args.n do
+		args[i] = tostring(args[i])
+	end
+	component.invoke(gpu, "set", 1, cursorY, table.concat(args, " ", 1, args.n))
+	cursorY = cursorY + 1
+end
+
+-- timer subsystem
 
 local timer_start, timer_check, timer_delete, timer_sleep
 do
