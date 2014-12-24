@@ -129,7 +129,7 @@ do
 				schedule(target)
 				return true
 			else
-				event_unregister(data[1], target)
+				event_unregister(evt[1], target)
 			end
 		end
 		return false
@@ -148,10 +148,13 @@ do
 		data.spid = source
 		if pid then
 			local proc = get_process(pid)
-			assert(proc, "send to nonexistent process")
-			table.insert(proc.event_queue, data)
-			schedule(pid)
-			return true
+			if proc then
+				table.insert(proc.event_queue, data)
+				schedule(pid)
+				return true
+			else
+				return false
+			end
 		else
 			return event_handle(data)
 		end
@@ -168,18 +171,23 @@ end
 
 -- debugging
 
-local gpu = component.list("gpu")()
-local cursorY = 1
-function print(...)
-	if event_send(nil, nil, "debug_print", ...) then
-		return
+do
+	local gpu = component.list("gpu")()
+	local cursorY = 1
+	local w, h = component.invoke(gpu, "getResolution")
+	component.invoke(gpu, "fill", 1, 1, w, h, " ")
+	function print(...)
+		if event_send(nil, nil, "debug_print", ...) then
+			return nil
+		end
+		local args = table.pack("[debug]", ...)
+		for i = 1, args.n do
+			args[i] = tostring(args[i])
+		end
+		component.invoke(gpu, "set", 1, cursorY, table.concat(args, " ", 1, args.n))
+		cursorY = cursorY + 1
+		return cursorY
 	end
-	local args = table.pack("[debug]", ...)
-	for i = 1, args.n do
-		args[i] = tostring(args[i])
-	end
-	component.invoke(gpu, "set", 1, cursorY, table.concat(args, " ", 1, args.n))
-	cursorY = cursorY + 1
 end
 
 -- timer subsystem
@@ -313,6 +321,10 @@ local function generate_environment(api)
 		                   "replace", "lrotate", "lshift", "rrotate", "rshift"}) do
 		env.bit32[name] = bit32[name]
 	end
+	env.unicode = {}
+	for _, name in ipairs({"char", "charWidth", "isWide", "len", "lower", "reverse", "sub", "upper", "wlen", "wtrunc"}) do
+		env.unicode[name] = unicode[name]
+	end
 	env.os = {}
 	env.os.time = os.time
 	env.os.difftime = os.difftime
@@ -341,6 +353,11 @@ end
 function api.get_uid()
 	return active_process.user_id
 end
+function api.get_far_uid(pid)
+	local proc = get_process(pid)
+	assert(proc, "get_far_uid on nonexistent process: " .. pid)
+	return proc.user_id
+end
 function api.get_param()
 	return active_process.param
 end
@@ -352,13 +369,15 @@ function api.unregister_event(name)
 end
 function api.broadcast(name, ...)
 	assert(type(name) == "string" and name:sub(1, 5) == "cast_", "broadcast names must start with cast_")
-	event_send(nil, active_process.pid, name, ...)
+	local success = event_send(nil, active_process.pid, name, ...)
 	api.check_process_yield()
+	return success
 end
 function api.send(pid, name, ...)
 	assert(type(name) == "string" and name:sub(1, 4) == "msg_", "broadcast names must start with msg_")
-	event_send(pid, active_process.pid, name, ...)
+	local success = event_send(pid, active_process.pid, name, ...)
 	api.check_process_yield()
+	return success
 end
 function api.get_priority()
 	return active_process.priority
@@ -419,6 +438,16 @@ end
 function api.halt()
 	assert(active_process.user_id == 0, "must be root to halt")
 	shutdown_allowed = true
+end
+function api.device_enumerate()
+	assert(active_process.user_id == 0, "must be root to enumerate devices")
+	for address, type in component.list() do
+		computer.pushSignal("component_added", address, type)
+	end
+end
+function api.device_proxy(address)
+	assert(active_process.user_id == 0, "must be root to proxy devices")
+	return component.proxy(address)
 end
 
 local function root_load(fname, priority, as_data)
