@@ -203,47 +203,62 @@ function commands.fed(path)
 				buf = buf:sub(cut + 1)
 			end
 		end
-		table.insert(lines, buf)
+		if #buf > 0 then
+			table.insert(lines, buf)
+		end
 		f.close()
-		print("loaded: " .. path)
+		print("loaded: " .. path .. ": " .. #lines .. " lines.")
 	end
 	local function fed_save(path)
 		local f = lazuli.proc_call(nil, "fopen", path, "w")
+		local buf = ""
 		for i, line in ipairs(lines) do
-			if i ~= 0 then
-				f.write("\n" .. line)
-			else
-				f.write(line)
+			buf = buf .. line .. "\n"
+			if #buf > 4096 then
+				f.write(buf)
+				buf = ""
 			end
 		end
+		if #buf ~= 0 then
+			f.write(buf)
+		end
 		f.close()
-		print("saved: " .. path)
+		print("saved: " .. path .. ": " .. #lines .. " lines.")
 	end
 	if path then
 		fed_load(path)
 	else
 		lines = {}
+		print("empty buffer")
 	end
 	local running = true
-	local function fed_cmd(c, arg1, arg2)
+	local function fed_cmd(c, argfrom, argto, arg2)
 		if c == "i" then
-			if arg1 then
-				table.insert(lines, arg1, arg2)
+			if argfrom then
+				for line = argfrom, argto do
+					table.insert(lines, line, arg2)
+				end
 			else
 				table.insert(lines, arg2)
 			end
 		elseif c == "e" then
-			if arg1 then
-				assert(arg1 >= 1 and arg1 <= #lines, "line out of bounds: " .. arg1)
-				lines[arg1] = arg2
+			if argfrom then
+				assert(argfrom >= 1 and argfrom <= #lines, "line out of bounds: " .. argfrom)
+				assert(argto >= 1 and argto <= #lines, "line out of bounds: " .. argto)
+				for line = argfrom, argto do
+					lines[line] = arg2
+				end
 			else
 				assert(#lines ~= 0, "empty file")
 				lines[#lines] = arg2
 			end
 		elseif c == "p" then
-			if arg1 then
-				assert(arg1 >= 1 and arg1 <= #lines, "line out of bounds: " .. arg1)
-				print(arg1 .. ": " .. lines[arg1])
+			if argfrom then
+				assert(argfrom >= 1 and argfrom <= #lines, "line out of bounds: " .. argfrom)
+				assert(argto >= 1 and argto <= #lines, "line out of bounds: " .. argto)
+				for line = argfrom, argto do
+					print(line .. ": " .. lines[line])
+				end
 			else
 				print("lines: " .. #lines)
 				for i, v in ipairs(lines) do
@@ -251,9 +266,12 @@ function commands.fed(path)
 				end
 			end
 		elseif c == "d" then
-			assert(arg1, "expected a line")
-			assert(arg1 >= 1 and arg1 <= #lines, "line out of bounds: " .. arg1)
-			table.remove(lines, arg1)
+			assert(argfrom, "expected a line")
+			assert(argfrom >= 1 and argfrom <= #lines, "line out of bounds: " .. argfrom)
+			assert(argto >= 1 and argto <= #lines, "line out of bounds: " .. argto)
+			for line = argto, argfrom, -1 do
+				table.remove(lines, line)
+			end
 		elseif c == "w" then
 			if #arg2 > 0 then
 				fed_save(arg2)
@@ -276,6 +294,7 @@ function commands.fed(path)
 		elseif c == "h" then
 			print("fed help: file editor")
 			print("<CMD><ARG1> <ARG2>")
+			print("ARG1 can be a line number or a range A-B")
 			print("Commands:")
 			print("i<L> <TEXT>: insert a line before line L (default: end)")
 			print("e<L> <TEXT>: replace line L (default: end)")
@@ -299,15 +318,28 @@ function commands.fed(path)
 			local c = cmd:sub(1, 1)
 			local spt = cmd:find(" ", 2)
 			local arg1, arg2
+			local valid = true
 			if spt then
 				arg1, arg2 = cmd:sub(2, spt - 1), cmd:sub(spt + 1)
 			else
 				arg1, arg2 = cmd:sub(2), ""
 			end
-			arg1 = tonumber(arg1)
-			local succ, err = pcall(fed_cmd, c, arg1, arg2)
-			if not succ then
-				print("failed: " .. err)
+			local argfrom, argto = tonumber(arg1), nil
+			if not argfrom and arg1:find("-") then
+				local spt = arg1:find("-")
+				argfrom, argto = tonumber(arg1:sub(1, spt - 1)), tonumber(arg1:sub(spt + 1))
+				if not argfrom or not argto or argto < argfrom then
+					print("invalid range")
+					valid = false
+				end
+			else
+				argto = argfrom
+			end
+			if valid then
+				local succ, err = pcall(fed_cmd, c, argfrom, argto, arg2)
+				if not succ then
+					print("failed: " .. err)
+				end
 			end
 		end
 	end
