@@ -82,6 +82,7 @@ print("starting console handler...")
 lazuli.register_event("cast_add_gpu")
 lazuli.register_event("cast_rem_gpu")
 lazuli.register_event("cast_console")
+lazuli.register_event("cast_console_raw")
 lazuli.register_event("key_down")
 lazuli.register_event("key_up")
 
@@ -111,6 +112,8 @@ while true do
 	local ev = lazuli.pop_event()
 	if ev[1] == "cast_console" then
 		print_console(table.unpack(ev, 2, ev.n))
+	elseif ev[1] == "cast_console_raw" then
+		console_write(tostring(ev[2]))
 	elseif ev[1] == "debug_print" then
 		print_console("[DEBUG]", table.unpack(ev, 2, ev.n))
 	elseif ev[1] == "key_down" then

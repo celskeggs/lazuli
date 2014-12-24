@@ -8,8 +8,8 @@ short_cache.boot = lazuli.boot_device()
 short_cache.temp = lazuli.temp_device()
 
 function raw_split(name)
-	if name:sub(1, 1) ~= "/" then
-		return nil, "file not found"
+	if name:sub(1, 1) ~= "/" or name:sub(2, 2) == "/" then
+		return nil, "invalid path"
 	end
 	local sptat = name:find("/", 3)
 	local drive, path
@@ -38,20 +38,18 @@ function raw_split(name)
 end
 
 local fs = {}
-function fs.test(x)
-	print("hello, world:", x)
-	return 127
-end
 function fs.fopen(name, mode)
 	local fs, path = raw_split(name)
 	if not fs then
 		error("cannot open " .. name .. ": " .. path)
 	end
-	local handle, err = fs.open(path, mode)
+	local handle, err = fs.open(path, mode or "r")
 	if not handle then
 		error("cannot open " .. name .. ": " .. err)
 	end
 	local obj = {}
+	-- These will run in the target process, which is probably fine.
+	-- But don't do any API calls without thinking them through!
 	function obj.seek(whence, offset)
 		return fs.seek(handle, whence, offset)
 	end
@@ -77,6 +75,9 @@ function fs.fmkdir(name)
 	end
 end
 function fs.fexists(name)
+	if name == "/" then
+		return true
+	end
 	local fs, path = raw_split(name)
 	if not fs then
 		return false
@@ -84,9 +85,16 @@ function fs.fexists(name)
 	return fs.exists(path)
 end
 function fs.fisdir(name)
+	if name == "/" then
+		return true
+	end
 	local fs, path = raw_split(name)
 	if not fs then
+		error("cannot check directory status of " .. name .. ": " .. path)
 		return false
+	end
+	if path == "/" then
+		return true
 	end
 	return fs.isDirectory(path)
 end
@@ -134,6 +142,7 @@ function fs.frename(from, to)
 		end
 		fs2.close(out)
 		fs1.close(inp)
+		fs1.remove(path1)
 	end
 end
 function fs.flist(name)
@@ -154,6 +163,11 @@ function fs.flist(name)
 		local list, err = fs.list(path)
 		if not list then
 			error("cannot list " .. name .. ": " .. err)
+		end
+		for i, v in ipairs(list) do
+			if v:sub(#v) == "/" then
+				list[i] = v:sub(1, #v-1)
+			end
 		end
 		return list
 	end

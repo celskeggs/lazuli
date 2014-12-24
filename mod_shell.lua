@@ -1,8 +1,25 @@
 function print(...)
 	lazuli.broadcast("cast_console", ...)
 end
+function write(x)
+	lazuli.broadcast("cast_console_raw", x)
+end
 
-local commands, help = {}, {}
+function path_join(a, b)
+	if a:sub(#a) == "/" then
+		if b:sub(1,1) == "/" then
+			return a .. b:sub(2)
+		else
+			return a .. b
+		end
+	elseif b:sub(1,1) == "/" then
+		return a .. b
+	else
+		return a .. "/" .. b
+	end
+end
+
+local commands, help, help_list = {}, {}, {}
 local running = true
 
 help.exit = "exit [certain]: exit the shell if certain is specified"
@@ -31,7 +48,7 @@ function commands.echo(...)
 end
 help.help = "help: show this information"
 function commands.help()
-	for k, v in pairs(help) do
+	for k, v in ipairs(help_list) do
 		print(v)
 	end
 end
@@ -67,13 +84,76 @@ function commands.rexec(name, priority)
 end
 help.flist = "flist <PATH>: list the specified directory"
 function commands.flist(path)
-	local listed = lazuli.proc_call(nil, "flist", path)
-	table.sort(listed)
-	print("Found", #listed, "files.")
-	for i, v in ipairs(listed) do
-		print(i, v)
+	if not path then
+		print("file path expected")
+	else
+		local listed = lazuli.proc_call(nil, "flist", path)
+		table.sort(listed)
+		print("Found", #listed, "files.")
+		for i, v in ipairs(listed) do
+			if lazuli.proc_call(nil, "fisdir", path_join(path, v)) then
+				print(i, v .. "/")
+			else
+				print(i, v)
+			end
+		end
 	end
 end
+help.fdel = "fdel <PATH>: delete the specified file"
+function commands.fdel(path)
+	if not path then
+		print("file path expected")
+	else
+		lazuli.proc_call(nil, "fremove", path)
+	end
+end
+help.frename = "frename <FROM> <TO>: rename the specified file"
+function commands.frename(from, to)
+	if not from or not to then
+		print("file paths expected")
+	else
+		lazuli.proc_call(nil, "frename", from, to)
+	end
+end
+help.fstat = "fstat <PATH>: provide status info on the file"
+function commands.fstat(path)
+	if not path then
+		print("file path expected")
+	elseif not lazuli.proc_call(nil, "fexists", path) then
+		print(path .. ": file does not exist")
+	elseif lazuli.proc_call(nil, "fisdir", path) then
+		print(path .. ": directory")
+	else
+		print(path .. ": normal file")
+	end
+end
+help.fmkdir = "fmkdir <PATH>: make the specified directory"
+function commands.fmkdir(path)
+	if not path then
+		print("file path expected")
+	else
+		lazuli.proc_call(nil, "fmkdir", path)
+	end
+end
+help.fdump = "fdump <PATH>: dump the file to the console"
+function commands.fdump(path)
+	if not path then
+		print("file path expected")
+	else
+		local f = lazuli.proc_call(nil, "fopen", path)
+		while true do
+			local x = f.read(4096)
+			if not x then break end
+			write(x)
+		end
+		f.close()
+	end
+end
+
+for _, v in pairs(help) do
+	table.insert(help_list, v)
+end
+table.sort(help_list)
 
 lazuli.register_event("cast_console_input")
 print("started shell")
