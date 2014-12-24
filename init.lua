@@ -1,6 +1,19 @@
 _LAZULI_VERSION = "0.1.0"
 _OSVERSION = "Lazuli " .. _LAZULI_VERSION
 
+-- debugging
+
+local gpu = component.list("gpu")()
+local cursorY = 1
+function print(...)
+	local args = table.pack(...)
+	for i = 1, args.n do
+		args[i] = tostring(args[i])
+	end
+	component.invoke(gpu, "set", 1, cursorY, table.concat(args, " ", 1, args.n))
+	cursorY = cursorY + 1
+end
+
 -- The scheduler is the core.
 
 local spark, schedule, next_scheduled, higher_scheduled, get_process, dealloc_process
@@ -138,9 +151,11 @@ local timer_start, timer_check, timer_delete, timer_sleep
 do
 	local timers = {}
 	function timer_start(time, pid)
+		assert(timers[pid] == nil, "timer already started")
 		timers[pid] = computer.uptime() + time
 	end
 	function timer_delete(pid)
+		assert(timers[pid] ~= nil, "timer not started")
 		timers[pid] = nil
 	end
 	function timer_check() -- TODO: make this faster
@@ -162,7 +177,11 @@ do
 	end
 	function timer_sleep()
 		local nextat = timer_check()
-		event_sleep(nextat - computer.uptime())
+		if nextat then
+			event_sleep(nextat - computer.uptime())
+		else
+			event_sleep() -- forever
+		end
 	end
 end
 
@@ -276,6 +295,10 @@ local shutdown_allowed = false
 local api = {}
 -- api MUST ONLY BE A TABLE OF FUNCTIONS
 
+function api.sleep(timeout)
+	timer_start(timeout, active_process.pid)
+	api.process_block()
+end
 function api.get_pid()
 	return active_process.pid
 end
@@ -352,22 +375,36 @@ function api.halt()
 	shutdown_allowed = true
 end
 
-spawn_outer([[
-	print("== init script ==")
-	print("test", lazuli.get_pid)
-	print("pid is", lazuli.get_pid())
-	print("uid is", lazuli.get_uid())
-	print(lazuli.get_param())
-	print("== event test ==")
-	lazuli.register_event("key_down")
-	print("waiting for key_down")
-	lazuli.block_event()
-	local event = lazuli.pop_event()
-	print("got", event[1], event[2], event[3], event[4], event[5], event[6])
-	lazuli.unregister_event("key_down")
-	print("== end of init ==")
-	lazuli.halt()
-]], "init", 0, 0, "HELLO WORLD")
+local function root_load(fname, as_data)
+	print("Loading:", fname)
+	local address = computer.getBootAddress()
+	assert(address, "expected a boot address")
+	local handle, err = component.invoke(address, "open", fname)
+	if not handle then
+		error("can't open " .. fname .. ": " .. err)
+	end
+	local buffer = ""
+	while true do
+		local data, err = component.invoke(address, "read", handle, math.huge)
+		if data then
+			buffer = buffer .. data
+		elseif err then
+			error("can't read " .. fname .. ": " .. err)
+		else
+			break
+		end
+	end
+	component.invoke(address, "close", handle)
+	if as_data then
+		return buffer
+	else
+		return spawn_outer(buffer, fname, 0, 0)
+	end
+end
+
+for mod in string.gmatch(root_load("/mods.conf", true), "%S+") do
+	root_load("/mod_" .. mod .. ".lua")
+end
 
 -- scheduler loop
 while get_process(0) do
@@ -392,6 +429,8 @@ while get_process(0) do
 end
 if shutdown_allowed then
 	print("system halted")
+	computer.shutdown()
+	-- computer.pullSignal(10)
 else
 	error("process 0 killed - crashed")
 end
