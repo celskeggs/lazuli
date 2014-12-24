@@ -7,17 +7,17 @@ print("== mod_init.lua ==")
 print("pid is", lazuli.get_pid())
 print("uid is", lazuli.get_uid())
 print("HELLO", "WORLD")
-print("== event test ==")
-lazuli.register_event("key_down")
-print("waiting for key_down")
+--[[ print("== event test ==")
+lazuli.register_event("cast_console_input")
+print("waiting for cast_console_input")
 while true do
 	lazuli.block_event()
 	local event = lazuli.pop_event()
-	print("got", event[1], event[2], event[3], event[4], event[5], event[6])
-	if event[3] == 13 or event[3] == 10 then
+	print("entered:", event[2])
+	if event[2] == "exit" then
 		break
 	end
 end
-lazuli.unregister_event("key_down")
+lazuli.unregister_event("cast_console_input") ]]
 print("== end of init ==")
-lazuli.halt()
+-- lazuli.halt()

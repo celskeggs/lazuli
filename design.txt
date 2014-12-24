@@ -1,17 +1,17 @@
 # LAZULI: A Lua-based OpenComputers RTOS
 
-* Multitasking
-  * Cooperative
-  * With priorities
-  * IPC
-  * Synchronization
-* Drivers
-* Filesystem
-* Simple shell
-* Networking
-* Real-time debugging
-* Security
-* Remote access
+* Multitasking [x]
+  * Cooperative [x]
+  * With priorities [x]
+  * IPC [~]
+  * Synchronization [ ]
+* Drivers [~]
+* Filesystem [ ]
+* Simple shell [ ]
+* Networking [ ]
+* Real-time debugging [ ]
+* Security [ ]
+* Remote access [ ]
 
 
 # Multitasking is the core of an RTOS.

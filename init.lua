@@ -3,7 +3,7 @@ _OSVERSION = "Lazuli " .. _LAZULI_VERSION
 
 -- The scheduler is the core.
 
-local spark, schedule, next_scheduled, higher_scheduled, get_process, dealloc_process, processes_exist
+local spark, schedule, next_scheduled, higher_scheduled, get_process, dealloc_process, processes_exist, list_processes, process_wait
 
 do -- Note that O() declarations ignore memory allocation.
 	local active_priorities = {}
@@ -69,9 +69,9 @@ do -- Note that O() declarations ignore memory allocation.
 
 	local processes = {}
 	local next_pid = 0
-	function spark(main_function, priority, user_id, param)
+	function spark(main_function, source, priority, user_id, param)
 		local routine = coroutine.create(main_function)
-		local structure = {coroutine=routine, user_id=user_id, priority=priority, queued=false, param=param, event_queue={}}
+		local structure = {coroutine=routine, source=source, user_id=user_id, priority=priority, queued=false, param=param, event_queue={}, waiting={}}
 		structure.pid = next_pid
 		next_pid = next_pid + 1
 		processes[structure.pid] = structure
@@ -105,6 +105,11 @@ do -- Note that O() declarations ignore memory allocation.
 	end
 	function dealloc_process(proc)
 		assert(not proc.queued, "cannot deallocate a queued process")
+		for _, pid in ipairs(processes[proc.pid].waiting) do
+			if processes[pid] then
+				schedule(pid)
+			end
+		end
 		processes[proc.pid] = nil
 	end
 	function processes_exist()
@@ -112,6 +117,19 @@ do -- Note that O() declarations ignore memory allocation.
 			return true
 		end
 		return false
+	end
+	function list_processes()
+		local out = {}
+		for pid, proc in pairs(processes) do
+			table.insert(out, pid)
+		end
+		table.sort(out)
+		return out
+	end
+	function process_wait(listener, target)
+		local proct = processes[target]
+		assert(proct, "process_wait on nonexistent process")
+		table.insert(proct.waiting, listener)
 	end
 end
 
@@ -160,7 +178,9 @@ do
 		end
 	end
 	function event_register(name, pid)
-		assert(event_registry[name] == nil, "event already registered: " .. name)
+		if event_registry[name] ~= nil then
+			assert(not get_process(event_registry[name]), "event already registered: " .. name .. " (to " .. pid .. ")")
+		end
 		event_registry[name] = pid
 	end
 	function event_unregister(name, pid)
@@ -248,7 +268,7 @@ local function generate_environment(api)
 	env.next = next
 	env.pairs = pairs
 	env.pcall = pcall
-	-- Note: these three are dubious.
+
 	env.rawequal = rawequal
 	env.rawget = rawget
 	env.rawset = rawset
@@ -328,6 +348,8 @@ local function generate_environment(api)
 	env.os = {}
 	env.os.time = os.time
 	env.os.difftime = os.difftime
+	env.debug = {}
+	env.debug.traceback = debug.traceback
 	env.lazuli = {}
 	for k, v in pairs(api) do
 		env.lazuli[k] = v
@@ -339,7 +361,7 @@ end
 
 local active_process
 local timeslice_ticks
-local shutdown_allowed = false
+local shutdown_allowed, shutdown_reboot = false, false
 local api = {}
 -- api MUST ONLY BE A TABLE OF FUNCTIONS
 
@@ -350,13 +372,41 @@ end
 function api.get_pid()
 	return active_process.pid
 end
-function api.get_uid()
-	return active_process.user_id
+function api.get_uid(pid)
+	if pid then
+		local proc = get_process(pid)
+		assert(proc, "get_uid on nonexistent process: " .. pid)
+		return proc.user_id
+	else
+		return active_process.user_id
+	end
 end
-function api.get_far_uid(pid)
-	local proc = get_process(pid)
-	assert(proc, "get_far_uid on nonexistent process: " .. pid)
-	return proc.user_id
+function api.get_priority(pid)
+	if pid then
+		local proc = get_process(pid)
+		assert(proc, "get_priority on nonexistent process: " .. pid)
+		return proc.priority
+	else
+		return active_process.priority
+	end
+end
+function api.get_queued(pid)
+	if pid then
+		local proc = get_process(pid)
+		assert(proc, "get_queued on nonexistent process: " .. pid)
+		return proc.queued
+	else
+		return active_process.queued
+	end
+end
+function api.get_source(pid)
+	if pid then
+		local proc = get_process(pid)
+		assert(proc, "get_source on nonexistent process: " .. pid)
+		return proc.source
+	else
+		return active_process.source
+	end
 end
 function api.get_param()
 	return active_process.param
@@ -378,9 +428,6 @@ function api.send(pid, name, ...)
 	local success = event_send(pid, active_process.pid, name, ...)
 	api.check_process_yield()
 	return success
-end
-function api.get_priority()
-	return active_process.priority
 end
 function api.pop_event()
 	if active_process.event_queue[1] then
@@ -406,7 +453,7 @@ function spawn_outer(code, chunkname, priority, user_id, param)
 	local env = generate_environment(api)
 	local f, err = load(code, chunkname, "t", env)
 	if f then
-		return spark(f, priority, user_id, param)
+		return spark(f, chunkname, priority, user_id, param)
 	else
 		error("could not load chunk " .. chunkname .. ": " .. err)
 	end
@@ -416,6 +463,12 @@ function api.spawn(code, chunkname, priority, param)
 end
 function api.wake(pid)
 	schedule(pid)
+end
+function api.join(pid)
+	process_wait(active_process.pid, pid)
+	while get_process(pid) do
+		api.process_block()
+	end
 end
 -- Always yield.
 function api.process_yield()
@@ -435,9 +488,10 @@ end
 function api.process_block()
 	coroutine.yield(true)
 end
-function api.halt()
+function api.halt(is_reboot)
 	assert(active_process.user_id == 0, "must be root to halt")
 	shutdown_allowed = true
+	shutdown_reboot = is_reboot
 end
 function api.device_enumerate()
 	assert(active_process.user_id == 0, "must be root to enumerate devices")
@@ -449,9 +503,17 @@ function api.device_proxy(address)
 	assert(active_process.user_id == 0, "must be root to proxy devices")
 	return component.proxy(address)
 end
+function api.list_processes()
+	return list_processes()
+end
+local root_load
+function api.root_load(fname, priority, as_data)
+	assert(active_process.user_id == 0, "must be root to root_load")
+	return root_load(fname, priority, as_data)
+end
 
-local function root_load(fname, priority, as_data)
-	print("Loading:", fname)
+function root_load(fname, priority, as_data)
+	print("Loading: " .. fname)
 	local address = computer.getBootAddress()
 	assert(address, "expected a boot address")
 	local handle, err = component.invoke(address, "open", fname)
@@ -500,7 +562,7 @@ while processes_exist() and not shutdown_allowed do
 		local success, err = coroutine.resume(active_process.coroutine)
 		if not success then
 			-- TODO: proper error handling
-			print("process", active_process.pid, "crashed:", err)
+			print("process " .. active_process.pid .. " crashed:", err)
 		end
 		if coroutine.status(active_process.coroutine) == "dead" then
 			dealloc_process(active_process)
@@ -509,7 +571,7 @@ while processes_exist() and not shutdown_allowed do
 end
 if shutdown_allowed then
 	print("system halted")
-	computer.shutdown()
+	computer.shutdown(shutdown_reboot)
 else
 	error("all processes killed - crashed")
 end

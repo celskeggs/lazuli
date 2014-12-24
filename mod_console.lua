@@ -11,7 +11,7 @@ function print_console(...)
 	for i = 1, args.n do
 		args[i] = tostring(args[i])
 	end
-	console_write(table.concat(args, " ", 1, args.n) .. "\n")
+	console_write(table.concat(args, "\t", 1, args.n) .. "\n")
 end
 
 function text_detab(value) -- From OpenOS
