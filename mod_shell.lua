@@ -186,6 +186,132 @@ function commands.fexec(path, priority)
 		lazuli.register_event("cast_console_input")
 	end
 end
+help.fed = "fed <PATH>: edit the specified file"
+function commands.fed(path)
+	local lines
+	local function fed_load(path)
+		lines = {}
+		local f = lazuli.proc_call(nil, "fopen", path)
+		local buf = ""
+		while true do
+			local x = f.read(4096)
+			if not x then break end
+			buf = buf .. x
+			while buf:find("\n") do
+				local cut = buf:find("\n")
+				table.insert(lines, buf:sub(1, cut - 1))
+				buf = buf:sub(cut + 1)
+			end
+		end
+		table.insert(lines, buf)
+		f.close()
+		print("loaded: " .. path)
+	end
+	local function fed_save(path)
+		local f = lazuli.proc_call(nil, "fopen", path, "w")
+		for i, line in ipairs(lines) do
+			if i ~= 0 then
+				f.write("\n" .. line)
+			else
+				f.write(line)
+			end
+		end
+		f.close()
+		print("saved: " .. path)
+	end
+	if path then
+		fed_load(path)
+	else
+		lines = {}
+	end
+	local running = true
+	local function fed_cmd(c, arg1, arg2)
+		if c == "i" then
+			if arg1 then
+				table.insert(lines, arg1, arg2)
+			else
+				table.insert(lines, arg2)
+			end
+		elseif c == "e" then
+			if arg1 then
+				assert(arg1 >= 1 and arg1 <= #lines, "line out of bounds: " .. arg1)
+				lines[arg1] = arg2
+			else
+				assert(#lines ~= 0, "empty file")
+				lines[#lines] = arg2
+			end
+		elseif c == "p" then
+			if arg1 then
+				assert(arg1 >= 1 and arg1 <= #lines, "line out of bounds: " .. arg1)
+				print(arg1 .. ": " .. lines[arg1])
+			else
+				print("lines: " .. #lines)
+				for i, v in ipairs(lines) do
+					print(i .. ": " .. v)
+				end
+			end
+		elseif c == "d" then
+			assert(arg1, "expected a line")
+			assert(arg1 >= 1 and arg1 <= #lines, "line out of bounds: " .. arg1)
+			table.remove(lines, arg1)
+		elseif c == "w" then
+			if #arg2 > 0 then
+				fed_save(arg2)
+			else
+				assert(path, "expected a file")
+				fed_save(path)
+			end
+		elseif c == "r" then
+			if #arg2 > 0 then
+				fed_load(arg2)
+			else
+				assert(path, "expected a file")
+				fed_load(path)
+			end
+		elseif c == "q" then
+			print("bye")
+			running = false
+		elseif c == "c" then
+			print("line count: " .. #lines)
+		elseif c == "h" then
+			print("fed help: file editor")
+			print("<CMD><ARG1> <ARG2>")
+			print("Commands:")
+			print("i<L> <TEXT>: insert a line before line L (default: end)")
+			print("e<L> <TEXT>: replace line L (default: end)")
+			print("p<L>: print line L (default: all)")
+			print("d<L>: delete line L (default: do nothing)")
+			print("w <FILE>: write the buffer to FILE (default: command-line file)")
+			print("r <FILE>: read the buffer from FILE (default: command-line file)")
+			print("c: count the number of lines")
+			print("q: quit fed")
+			print("h: show this help")
+		else
+			print("unknown fed command (try 'h')")
+		end
+	end
+	while running do
+		lazuli.block_event()
+		local event = lazuli.pop_event()
+		if event[1] == "cast_console_input" and #event[2] > 0 then
+			local cmd = event[2]
+			print("fed> " .. cmd)
+			local c = cmd:sub(1, 1)
+			local spt = cmd:find(" ", 2)
+			local arg1, arg2
+			if spt then
+				arg1, arg2 = cmd:sub(2, spt - 1), cmd:sub(spt + 1)
+			else
+				arg1, arg2 = cmd:sub(2), ""
+			end
+			arg1 = tonumber(arg1)
+			local succ, err = pcall(fed_cmd, c, arg1, arg2)
+			if not succ then
+				print("failed: " .. err)
+			end
+		end
+	end
+end
 
 for _, v in pairs(help) do
 	table.insert(help_list, v)
@@ -197,9 +323,9 @@ print("started shell")
 while running do
 	lazuli.block_event()
 	local event = lazuli.pop_event()
-	if event[1] == "cast_console_input" then
-		local cmd = {}
+	if event[1] == "cast_console_input" and #event[2] > 0 then
 		print("> " .. event[2])
+		local cmd = {}
 		for word in string.gmatch(event[2], "[^ ]*") do
 			if #word ~= 0 then
 				table.insert(cmd, word)
