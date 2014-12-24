@@ -16,7 +16,7 @@ end
 
 -- The scheduler is the core.
 
-local spark, schedule, next_scheduled, higher_scheduled, get_process, dealloc_process
+local spark, schedule, next_scheduled, higher_scheduled, get_process, dealloc_process, processes_exist
 
 do -- Note that O() declarations ignore memory allocation.
 	local active_priorities = {}
@@ -92,11 +92,13 @@ do -- Note that O() declarations ignore memory allocation.
 		return structure.pid
 	end
 	function schedule(pid)
+		-- print("schedule", pid)
 		local proc = processes[pid]
 		assert(proc, "schedule on nonexistent process")
-		assert(not proc.queued, "schedule on scheduled process")
-		insert_queue(proc.priority, proc)
-		proc.queued = true
+		if not proc.queued then
+			insert_queue(proc.priority, proc)
+			proc.queued = true
+		end
 	end
 	function next_scheduled()
 		local highest = pop_highest()
@@ -108,6 +110,7 @@ do -- Note that O() declarations ignore memory allocation.
 	-- Is there a higher-priority process than this priority?
 	function higher_scheduled(priority)
 		local highest = peek_highest()
+		-- print("higher_scheduled", highest and highest.priority, ">?", priority)
 		return highest and highest.priority > priority
 	end
 	function get_process(pid)
@@ -117,25 +120,51 @@ do -- Note that O() declarations ignore memory allocation.
 		assert(not proc.queued, "cannot deallocate a queued process")
 		processes[proc.pid] = nil
 	end
+	function processes_exist()
+		for pid, proc in pairs(processes) do
+			return true
+		end
+		return false
+	end
 end
 
 -- Timer and event subsystems
 
-local event_check, event_sleep, event_register, event_unregister
+local event_check, event_sleep, event_register, event_unregister, event_send
 do
 	local event_registry = {}
+	local function event_handle(evt)
+		local target = event_registry[evt[1]]
+		if target then
+			local proc = get_process(target)
+			if proc then
+				table.insert(proc.event_queue, evt)
+				schedule(target)
+			else
+				event_unregister(data[1], target)
+			end
+		end
+	end
 	function event_sleep(timeout)
 		local data = table.pack(computer.pullSignal(timeout))
 		if data.n > 0 then
-			local target = event_registry[data[1]]
-			if target then
-				table.insert(get_process(target).event_queue, data)
-				schedule(target)
-			end
+			event_handle(data)
 		end
 	end
 	function event_check()
 		event_sleep(0)
+	end
+	function event_send(pid, source, name, ...)
+		local data = table.pack(name, ...)
+		data.spid = source
+		if pid then
+			local proc = get_process(pid)
+			assert(proc, "send to nonexistent process")
+			table.insert(proc.event_queue, data)
+			schedule(pid)
+		else
+			event_handle(data)
+		end
 	end
 	function event_register(name, pid)
 		assert(event_registry[name] == nil, "event already registered: " .. name)
@@ -203,7 +232,6 @@ local function generate_environment(api)
 	env.next = next
 	env.pairs = pairs
 	env.pcall = pcall
-	env.print = print -- TODO: examine
 	-- Note: these three are dubious.
 	env.rawequal = rawequal
 	env.rawget = rawget
@@ -314,6 +342,16 @@ end
 function api.unregister_event(name)
 	event_unregister(name, active_process.pid)
 end
+function api.broadcast(name, ...)
+	assert(type(name) == "string" and name:sub(1, 5) == "cast_", "broadcast names must start with cast_")
+	event_send(nil, active_process.pid, name, ...)
+	api.check_process_yield()
+end
+function api.send(pid, name, ...)
+	assert(type(name) == "string" and name:sub(1, 4) == "msg_", "broadcast names must start with msg_")
+	event_send(pid, active_process.pid, name, ...)
+	api.check_process_yield()
+end
 function api.get_priority()
 	return active_process.priority
 end
@@ -349,12 +387,12 @@ end
 function api.spawn(code, chunkname, priority, param)
 	return spawn_outer(code, chunkname, priority, active_process.user_id, param)
 end
-function api.schedule(pid)
+function api.wake(pid)
 	schedule(pid)
 end
 -- Always yield.
 function api.process_yield()
-	api.schedule(api.get_pid())
+	schedule(api.get_pid())
 	coroutine.yield(true)
 end
 -- Yield if enough time has been spent.
@@ -375,7 +413,7 @@ function api.halt()
 	shutdown_allowed = true
 end
 
-local function root_load(fname, as_data)
+local function root_load(fname, priority, as_data)
 	print("Loading:", fname)
 	local address = computer.getBootAddress()
 	assert(address, "expected a boot address")
@@ -398,16 +436,21 @@ local function root_load(fname, as_data)
 	if as_data then
 		return buffer
 	else
-		return spawn_outer(buffer, fname, 0, 0)
+		return spawn_outer(buffer, fname, priority, 0, print)
 	end
 end
 
-for mod in string.gmatch(root_load("/mods.conf", true), "%S+") do
-	root_load("/mod_" .. mod .. ".lua")
+local priority = 0
+for mod in string.gmatch(root_load("/mods.conf", nil, true), "%S+") do
+	if mod:sub(1, 1) == "=" then
+		priority = tonumber(mod:sub(2))
+	else
+		root_load("/mod_" .. mod .. ".lua", priority)
+	end
 end
 
 -- scheduler loop
-while get_process(0) do
+while processes_exist() and not shutdown_allowed do
 	timer_check()
 	event_check()
 
@@ -430,7 +473,6 @@ end
 if shutdown_allowed then
 	print("system halted")
 	computer.shutdown()
-	-- computer.pullSignal(10)
 else
-	error("process 0 killed - crashed")
+	error("all processes killed - crashed")
 end
