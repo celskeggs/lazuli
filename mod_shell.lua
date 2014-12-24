@@ -65,6 +65,15 @@ function commands.rexec(name, priority)
 		lazuli.register_event("cast_console_input")
 	end
 end
+help.flist = "flist <PATH>: list the specified directory"
+function commands.flist(path)
+	local listed = lazuli.proc_call(nil, "flist", path)
+	table.sort(listed)
+	print("Found", #listed, "files.")
+	for i, v in ipairs(listed) do
+		print(i, v)
+	end
+end
 
 lazuli.register_event("cast_console_input")
 print("started shell")

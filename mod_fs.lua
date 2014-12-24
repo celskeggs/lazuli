@@ -14,7 +14,7 @@ function raw_split(name)
 	local sptat = name:find("/", 3)
 	local drive, path
 	if not sptat then
-		drive, path = name:sub(1), "/"
+		drive, path = name:sub(2), "/"
 	else
 		drive, path = name:sub(2, sptat - 1), name:sub(sptat)
 	end
@@ -109,17 +109,17 @@ function fs.frename(from, to)
 		if not out then
 			error("cannot rename to " .. to .. ": " .. err2)
 		end
-		local in, err1 = fs1.open(path1, "rb")
+		local inp, err1 = fs1.open(path1, "rb")
 		if not out then
 			fs2.close(out)
 			error("cannot rename " .. from .. ": " .. err1)
 		end
 		while true do
-			local data, err = fs1.read(in, 4096)
+			local data, err = fs1.read(inp, 4096)
 			if not data then
 				if err then
 					fs2.close(out)
-					fs1.close(in)
+					fs1.close(inp)
 					error("cannot rename " .. from .. ": " .. err)
 				else
 					break
@@ -128,12 +128,12 @@ function fs.frename(from, to)
 			local succ, err = fs2.write(out, data)
 			if not succ then
 				fs2.close(out)
-				fs1.close(in)
+				fs1.close(inp)
 				error("cannot rename to " .. to .. ": " .. err)
 			end
 		end
 		fs2.close(out)
-		fs1.close(in)
+		fs1.close(inp)
 	end
 end
 function fs.flist(name)
