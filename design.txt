@@ -7,7 +7,7 @@
   * Synchronization [ ]
 * Drivers [~]
 * Filesystem [ ]
-* Simple shell [ ]
+* Simple shell [x]
 * Networking [ ]
 * Real-time debugging [ ]
 * Security [ ]

@@ -71,7 +71,7 @@ do -- Note that O() declarations ignore memory allocation.
 	local next_pid = 0
 	function spark(main_function, source, priority, user_id, param)
 		local routine = coroutine.create(main_function)
-		local structure = {coroutine=routine, source=source, user_id=user_id, priority=priority, queued=false, param=param, event_queue={}, waiting={}}
+		local structure = {coroutine=routine, source=source, user_id=user_id, priority=priority, queued=false, param=param, event_queue={}, waiting={}, cputime=0}
 		structure.pid = next_pid
 		next_pid = next_pid + 1
 		processes[structure.pid] = structure
@@ -79,7 +79,7 @@ do -- Note that O() declarations ignore memory allocation.
 		return structure.pid
 	end
 	function schedule(pid)
-		-- print("schedule", pid)
+		assert(pid, "pid expected in schedule")
 		local proc = processes[pid]
 		assert(proc, "schedule on nonexistent process")
 		if not proc.queued then
@@ -408,6 +408,15 @@ function api.get_source(pid)
 		return active_process.source
 	end
 end
+function api.get_cputime(pid)
+	if pid then
+		local proc = get_process(pid)
+		assert(proc, "get_cputime on nonexistent process: " .. pid)
+		return proc.cputime
+	else
+		return active_process.cputime
+	end
+end
 function api.get_param()
 	return active_process.param
 end
@@ -424,10 +433,59 @@ function api.broadcast(name, ...)
 	return success
 end
 function api.send(pid, name, ...)
-	assert(type(name) == "string" and name:sub(1, 4) == "msg_", "broadcast names must start with msg_")
+	assert(type(name) == "string" and name:sub(1, 4) == "msg_", "send names must start with msg_")
 	local success = event_send(pid, active_process.pid, name, ...)
 	api.check_process_yield()
 	return success
+end
+function api.proc_call(pid, name, ...)
+	name = "proc_" .. name
+	local compound = {ready=false, error=nil, results=nil, arguments=table.pack(...), notify=active_process.pid}
+	assert(event_send(pid, active_process.pid, name, compound), "procedure unavailable: " .. name)
+	while not compound.ready do
+		api.process_block()
+	end
+	if compound.error then
+		error(compound.error)
+	end
+	return table.unpack(compound.results, 1, compound.results.n)
+end
+function api.proc_serve_global(name)
+	api.register_event("proc_" .. name)
+end
+function api.proc_serve_handle(event, name, target)
+	if event[1] == "proc_" .. name then
+		local cpd = event[2]
+		local results = table.pack(pcall(target, table.unpack(cpd.arguments, 1, cpd.arguments.n)))
+		if results[1] then
+			table.remove(results, 1)
+			results.n = results.n - 1
+			cpd.results = results
+		else
+			cpd.error = results[2]
+		end
+		cpd.ready = true
+		schedule(cpd.notify)
+		return true
+	end
+	return false
+end
+function api.proc_serve_loop(procs, is_global)
+	if is_global then
+		for name, _ in pairs(procs) do
+			api.proc_serve_global(name)
+		end
+	end
+	while true do
+		api.block_event()
+		local event = api.pop_event()
+		if event[1]:sub(1, 5) == "proc_" then
+			local proc = procs[event[1]:sub(6)]
+			if proc then
+				assert(api.proc_serve_handle(event, event[1]:sub(6), proc))
+			end
+		end
+	end
 end
 function api.pop_event()
 	if active_process.event_queue[1] then
@@ -559,7 +617,10 @@ while processes_exist() and not shutdown_allowed do
 	else
 		timeslice_ticks = 10
 		shutdown_allowed = false
+		local start = os.clock()
 		local success, err = coroutine.resume(active_process.coroutine)
+		local endt = os.clock()
+		active_process.cputime = active_process.cputime + endt - start
 		if not success then
 			-- TODO: proper error handling
 			print("process " .. active_process.pid .. " crashed:", err)

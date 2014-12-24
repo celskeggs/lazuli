@@ -37,9 +37,11 @@ function commands.help()
 end
 help.proc = "proc: list processes"
 function commands.proc()
-	print("PID", "PRI", "USER", "QUEUED", "SRC")
+	print("PID", "PRI", "USER", "QUEUED", "CPU", "SRC")
 	for _, pid in ipairs(lazuli.list_processes()) do
-		print(pid, lazuli.get_priority(pid), lazuli.get_uid(pid), lazuli.get_queued(pid), lazuli.get_source(pid))
+		local time = lazuli.get_cputime(pid)
+		time = math.ceil(time * 1000)
+		print(pid, lazuli.get_priority(pid), lazuli.get_uid(pid), lazuli.get_queued(pid), time, lazuli.get_source(pid))
 	end
 end
 help.rload = "rload <FNAME> [PRIORITY]: load root disk module"
