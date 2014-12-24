@@ -39,29 +39,18 @@ To block, a process registers itself for wakeup in some fashion, and then uses a
 For userspace, processes are seen only as process IDs and through API calls.
 
 
-# Inter-process communication is also important.
+# Shared memory
 
 The most fundamental method of IPC is shared memory... this is really easy in Lua.
 
 This works by creating a table to be shared, and then transmitting it over an existing connection to the target process.
 
 
-# On top of shared memory, we build message queues.
+# Message queues
 
-A message queue is a table used as a queue, with a process identifier.
+Global message queues are provided as part of the event subsystem.
 
-To send a message, it is inserted into the table, and then any target process(es) is (are) woken by a system API call.
-
-To receive a message asynchronously, the table is checked for contents. If any contents are found, the first one is removed.
-
-To block on a message: The process adds itself to the wake-up set, and then loops until there is something in the table. Then it removes the found entry and removes itself from the wake-up set.
-
-
-# Procedure calls are built on top of message queues.
-
-A procedure call structure contains a process ID to wake up, some arguments, a slot to put the return value into, and a flag for if the function has returned.
-
-This structure is placed into the message queue.
+These can be sent to named channels (broadcast) or sent to known processes.
 
 
 # Mutexes (binary semaphores) are the basic synchronization mechanism.
