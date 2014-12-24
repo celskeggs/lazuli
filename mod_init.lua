@@ -1,5 +1,5 @@
 function print(...)
-	lazuli.broadcast("cast_term", ...)
+	lazuli.broadcast("cast_console", ...)
 end
 
 print(_OSVERSION)

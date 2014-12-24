@@ -7,12 +7,12 @@
 -- implementation
 
 local gpus = {}
-function print_term(...)
+function print_console(...)
 	local args = table.pack(...)
 	for i = 1, args.n do
 		args[i] = tostring(args[i])
 	end
-	term_write(table.concat(args, " ", 1, args.n) .. "\n")
+	console_write(table.concat(args, " ", 1, args.n) .. "\n")
 end
 
 function text_detab(value) -- From OpenOS
@@ -40,7 +40,7 @@ function text_wrap(value, width, maxWidth) -- From OpenOS
 	return line, start <= unicode.len(value) and unicode.sub(value, start) or nil, unicode.len(nl) > 0
 end
 
-function term_write(value) -- From OpenOS
+function console_write(value) -- From OpenOS
 	value = text_detab(tostring(value))
 	if unicode.wlen(value) == 0 then
 		return
@@ -78,10 +78,10 @@ end
 
 print = lazuli.get_param()
 
-print("starting terminal handler...")
+print("starting console handler...")
 lazuli.register_event("cast_add_gpu")
 lazuli.register_event("cast_rem_gpu")
-lazuli.register_event("cast_term")
+lazuli.register_event("cast_console")
 lazuli.register_event("key_down")
 lazuli.register_event("key_up")
 
@@ -90,10 +90,10 @@ lazuli.broadcast("cast_resend_devices")
 while true do
 	lazuli.block_event()
 	local ev = lazuli.pop_event()
-	if ev[1] == "cast_term" then
-		print_term(table.unpack(ev, 2, ev.n))
+	if ev[1] == "cast_console" then
+		print_console(table.unpack(ev, 2, ev.n))
 	elseif ev[1] == "debug_print" then
-		print_term("[DEBUG]", table.unpack(ev, 2, ev.n))
+		print_console("[DEBUG]", table.unpack(ev, 2, ev.n))
 	elseif ev[1] == "key_down" then
 		if ev[3] ~= 0 then
 			print("press", string.char(ev[3]))
