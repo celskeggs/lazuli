@@ -2,9 +2,8 @@
 -- Such work was:
 --     Copyright (c) 2013-2014 Florian "Sangar" N??cke
 -- Under the MIT license.
+-- Such code is marked as coming from OpenOS
 -- The rest of the code here is also available under the same license.
-
--- implementation
 
 local gpus = {}
 function print_console(...)
@@ -50,6 +49,7 @@ function console_write(value) -- From OpenOS
 		if not w then
 			return
 		end
+		h = h - 1 -- input line not included
 		local line, nl
 		repeat
 			local wrapAfter, margin = w - (gpu.cursorX - 1), w
@@ -87,6 +87,25 @@ lazuli.register_event("key_up")
 
 lazuli.broadcast("cast_resend_devices")
 
+local input_string = ""
+
+local function rerender_input()
+	for addr, gpu in pairs(gpus) do
+		local w, h = gpu.getResolution()
+		if not w then
+			return
+		end
+		if #input_string <= w - 2 then
+			gpu.set(1, h, "> " .. input_string)
+			if #input_string ~= w - 2 then
+				gpu.fill(2 + #input_string + 1, h, w - 3 - #input_string, 1, " ")
+			end
+		else
+			gpu.set(1, h, "> ..." .. input_string:sub(#input_string - w + 6))
+		end
+	end
+end
+
 while true do
 	lazuli.block_event()
 	local ev = lazuli.pop_event()
@@ -96,7 +115,21 @@ while true do
 		print_console("[DEBUG]", table.unpack(ev, 2, ev.n))
 	elseif ev[1] == "key_down" then
 		if ev[3] ~= 0 then
-			print("press", string.char(ev[3]))
+			if ev[3] == 13 or ev[3] == 10 then
+				if not lazuli.broadcast("cast_console_input", input_string) then
+					print("unhandled:", input_string)
+				end
+				input_string = ""
+			elseif ev[3] >= 32 and ev[3] <= 126 then
+				input_string = input_string .. string.char(ev[3])
+			elseif ev[3] == 8 then
+				if #input_string ~= 0 then
+					input_string = input_string:sub(1, #input_string - 1)
+				end
+			else
+				print("unknown char:", ev[3])
+			end
+			rerender_input()
 		end
 	elseif ev[1] == "cast_add_gpu" then
 		local next_y = 1
@@ -111,6 +144,7 @@ while true do
 		end
 		ev[2].cursorX = 1
 		ev[2].cursorY = next_y
+		rerender_input()
 	elseif ev[1] == "cast_rem_gpu" then
 		gpus[ev[2].address] = nil
 		if is_empty(gpus) then
