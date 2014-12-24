@@ -149,6 +149,43 @@ function commands.fdump(path)
 		f.close()
 	end
 end
+help.fload = "fload <PATH> [PRIORITY]: load filesystem module"
+function commands.fload(path, priority)
+	if not path then
+		print("file name expected")
+	else
+		local f = lazuli.proc_call(nil, "fopen", path)
+		local buf = ""
+		while true do
+			local x = f.read(4096)
+			if not x then break end
+			buf = buf .. x
+		end
+		f.close()
+		print("spawned as", lazuli.spawn(buf, name, tonumber(priority) or 0, lazuli.get_param()))
+	end
+end
+help.fexec = "fexec <PATH> [PRIORITY]: load filesystem module and release console until exit"
+function commands.fexec(path, priority)
+	if not path then
+		print("file name expected")
+	else
+		local f = lazuli.proc_call(nil, "fopen", path)
+		local buf = ""
+		while true do
+			local x = f.read(4096)
+			if not x then break end
+			buf = buf .. x
+		end
+		f.close()
+		lazuli.unregister_event("cast_console_input")
+		pid = lazuli.spawn(buf, name, tonumber(priority) or 0, lazuli.get_param())
+		print("spawned as", pid)
+		lazuli.join(pid)
+		print("joined", pid)
+		lazuli.register_event("cast_console_input")
+	end
+end
 
 for _, v in pairs(help) do
 	table.insert(help_list, v)
