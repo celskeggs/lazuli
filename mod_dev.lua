@@ -12,10 +12,24 @@ local devices = {}
 
 local unsent = {}
 
+function devlist(type)
+	local out = {}
+	for addr, ent in pairs(devices) do
+		if not type or ent.type == type then
+			table.insert(out, {address=addr, type=ent.type})
+		end
+	end
+	return out
+end
+
+lazuli.proc_serve_global("devlist")
+
 while true do
 	lazuli.block_event()
 	local ev = lazuli.pop_event()
-	if ev[1] == "component_added" then
+	if lazuli.proc_serve_handle(ev, "devlist", devlist) then
+		-- already handled
+	elseif ev[1] == "component_added" then
 		devices[ev[2]] = lazuli.device_proxy(ev[2])
 		if not lazuli.broadcast("cast_add_" .. ev[3], devices[ev[2]]) then
 			table.insert(unsent, ev[2])

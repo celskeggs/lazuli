@@ -186,6 +186,14 @@ function commands.fexec(path, priority)
 		lazuli.register_event("cast_console_input")
 	end
 end
+help.devlist = "devlist [TYPE]: list the components/devices in this computer"
+function commands.devlist(type)
+	local found = lazuli.proc_call(nil, "devlist", type)
+	print("found", #found, "devices.")
+	for i, v in ipairs(found) do
+		print(i .. ": " .. v.address .. " (" .. v.type .. ")")
+	end
+end
 help.fed = "fed <PATH>: edit the specified file"
 function commands.fed(path)
 	local lines
