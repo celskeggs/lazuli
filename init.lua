@@ -470,7 +470,7 @@ function api.proc_serve_handle(event, name, target)
 	end
 	return false
 end
-function api.proc_serve_loop(procs, is_global)
+function api.proc_serve_loop(procs, is_global, default)
 	if is_global then
 		for name, _ in pairs(procs) do
 			api.proc_serve_global(name)
@@ -479,11 +479,11 @@ function api.proc_serve_loop(procs, is_global)
 	while true do
 		api.block_event()
 		local event = api.pop_event()
-		if event[1]:sub(1, 5) == "proc_" then
-			local proc = procs[event[1]:sub(6)]
-			if proc then
-				assert(api.proc_serve_handle(event, event[1]:sub(6), proc))
-			end
+		local proc = procs[event[1]:sub(6)]
+		if event[1]:sub(1, 5) == "proc_" and proc then
+			assert(api.proc_serve_handle(event, event[1]:sub(6), proc))
+		else
+			default(event)
 		end
 	end
 end
@@ -568,6 +568,12 @@ local root_load
 function api.root_load(fname, priority, as_data)
 	assert(active_process.user_id == 0, "must be root to root_load")
 	return root_load(fname, priority, as_data)
+end
+function api.boot_device()
+	return computer.getBootAddress()
+end
+function api.temp_device()
+	return computer.tmpAddress()
 end
 
 function root_load(fname, priority, as_data)
