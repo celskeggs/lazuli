@@ -194,6 +194,12 @@ function commands.devlist(type)
 		print(i .. ": " .. v.address .. " (" .. v.type .. ")")
 	end
 end
+help.rtio = "rtio <NAME> <CMD> <ARGS>...: send a signal to the loaded rtio script"
+function commands.rtio(name, cmd, ...)
+	if not lazuli.broadcast("cast_rtio", name, cmd, ...) then
+		print("no rtio endpoint responded")
+	end
+end
 help.fed = "fed <PATH>: edit the specified file"
 function commands.fed(path)
 	local lines

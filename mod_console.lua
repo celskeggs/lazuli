@@ -217,7 +217,6 @@ while true do
 				need_clear[ev[2].address] = true
 			end
 		end
-		print("Found screen:", ev[2].address)
 		rerender_input()
 	elseif ev[1] == "cast_rem_screen" then
 		screens[ev[2].address] = nil
