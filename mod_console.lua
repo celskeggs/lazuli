@@ -5,7 +5,14 @@
 -- Such code is marked as coming from OpenOS
 -- The rest of the code here is also available under the same license.
 
-local gpus = {}
+local function is_empty(tab)
+	for k, v in pairs(tab) do
+		return false
+	end
+	return true
+end
+
+local gpus, screens = {}, {}
 function print_console(...)
 	local args = table.pack(...)
 	for i = 1, args.n do
@@ -40,47 +47,53 @@ function text_wrap(value, width, maxWidth) -- From OpenOS
 end
 
 function console_write(value) -- From OpenOS
-	value = text_detab(tostring(value))
-	if unicode.wlen(value) == 0 then
+	local base_value = text_detab(tostring(value))
+	if unicode.wlen(base_value) == 0 then
 		return
 	end
-	for addr, gpu in pairs(gpus) do
-		local w, h = gpu.getResolution()
-		if not w then
-			return
+	if not next(gpus) then return end -- no gpus
+	local gpuiter_index, gpu
+	for addr, screen in pairs(screens) do
+		gpuiter_index, gpu = next(gpus, gpuiter_index)
+		if gpuiter_index == nil then
+			gpuiter_index, gpu = next(gpus, gpuiter_index)
+			assert(gpuiter_index, "no gpus, somehow?")
 		end
-		h = h - 1 -- input line not included
-		local line, nl
-		repeat
-			local wrapAfter, margin = w - (gpu.cursorX - 1), w
-			line, value, nl = text_wrap(value, wrapAfter, margin)
-			gpu.set(gpu.cursorX, gpu.cursorY, line)
-			gpu.cursorX = gpu.cursorX + unicode.wlen(line)
-			if nl or (gpu.cursorX > w and wrap) then
-				gpu.cursorX = 1
-				gpu.cursorY = gpu.cursorY + 1
-			end
-			if gpu.cursorY > h then
-				gpu.copy(1, 1, w, h, 0, -1)
-				gpu.fill(1, h, w, 1, " ")
-				gpu.cursorY = h
-			end
-		until not value
+		if gpu.getScreen() ~= screen.address then
+			assert(gpu.bind(screen.address))
+		end
+		local w, h = gpu.getResolution()
+		if w then
+			local value = base_value
+			h = h - 1 -- input line not included
+			local line, nl
+			repeat
+				local wrapAfter, margin = w - (screen.cursorX - 1), w
+				line, value, nl = text_wrap(value, wrapAfter, margin)
+				gpu.set(screen.cursorX, screen.cursorY, line)
+				screen.cursorX = screen.cursorX + unicode.wlen(line)
+				if nl or (screen.cursorX > w and wrap) then
+					screen.cursorX = 1
+					screen.cursorY = screen.cursorY + 1
+				end
+				if screen.cursorY > h then
+					gpu.copy(1, 1, w, h, 0, -1)
+					gpu.fill(1, h, w, 1, " ")
+					screen.cursorY = h
+				end
+			until not value
+		end
 	end
-end
-
-local function is_empty(tab)
-	for k, v in pairs(tab) do
-		return false
-	end
-	return true
 end
 
 print = lazuli.get_param()
 
-print("starting console handler...")
+local _, rootgpu, rootscreen = print("starting console handler...")
+
 lazuli.register_event("cast_add_gpu")
 lazuli.register_event("cast_rem_gpu")
+lazuli.register_event("cast_add_screen")
+lazuli.register_event("cast_rem_screen")
 lazuli.register_event("cast_console")
 lazuli.register_event("cast_console_raw")
 lazuli.register_event("key_down")
@@ -91,21 +104,33 @@ lazuli.broadcast("cast_resend_devices")
 local input_string = ""
 
 local function rerender_input()
-	for addr, gpu in pairs(gpus) do
-		local w, h = gpu.getResolution()
-		if not w then
-			return
+	if not next(gpus) then return end -- no gpus
+	local gpuiter_index, gpu
+	for addr, screen in pairs(screens) do
+		gpuiter_index, gpu = next(gpus, gpuiter_index)
+		if gpuiter_index == nil then
+			gpuiter_index, gpu = next(gpus, gpuiter_index)
+			assert(gpuiter_index, "no gpus, somehow?")
 		end
-		if #input_string <= w - 2 then
-			gpu.set(1, h, "> " .. input_string)
-			if #input_string ~= w - 2 then
-				gpu.fill(2 + #input_string + 1, h, w - 3 - #input_string, 1, " ")
+		if gpu.getScreen() ~= screen.address then
+			assert(gpu.bind(screen.address))
+		end
+		local w, h = gpu.getResolution()
+		if w then
+			if #input_string <= w - 2 then
+				gpu.set(1, h, "> " .. input_string)
+				if #input_string ~= w - 2 then
+					gpu.fill(2 + #input_string + 1, h, w - 3 - #input_string, 1, " ")
+				end
+			else
+				gpu.set(1, h, "> ..." .. input_string:sub(#input_string - w + 6))
 			end
-		else
-			gpu.set(1, h, "> ..." .. input_string:sub(#input_string - w + 6))
 		end
 	end
 end
+
+local need_clear = {}
+local root_gpu_ready, root_screen_ready = false, false
 
 while true do
 	lazuli.block_event()
@@ -135,23 +160,66 @@ while true do
 			rerender_input()
 		end
 	elseif ev[1] == "cast_add_gpu" then
-		local next_y = 1
-		if is_empty(gpus) then
-			next_y = print("switching debug to console")
-			lazuli.register_event("debug_print")
-		end
 		gpus[ev[2].address] = ev[2]
-		local w, h = ev[2].getResolution()
-		if next_y == 1 then
-			ev[2].fill(1, 1, w, h, " ")
+		if ev[2].address == rootgpu and not root_gpu_ready then
+			root_gpu_ready = true
+			if root_screen_ready then
+				screens[rootscreen].cursorY = print("switching debug to console")
+				lazuli.register_event("debug_print")
+			end
 		end
-		ev[2].cursorX = 1
-		ev[2].cursorY = next_y
+		for addr, _ in pairs(need_clear) do
+			local scr = ev[2].getScreen()
+			if scr ~= addr then
+				ev[2].bind(addr)
+			end
+			local w, h = ev[2].getResolution()
+			ev[2].fill(1, 1, w, h, " ")
+			if scr and scr ~= addr then
+				ev[2].bind(scr)
+			end
+		end
+		need_clear = {}
 		rerender_input()
 	elseif ev[1] == "cast_rem_gpu" then
 		gpus[ev[2].address] = nil
 		if is_empty(gpus) then
 			lazuli.unregister_event("debug_print")
 		end
+	elseif ev[1] == "cast_add_screen" then
+		screens[ev[2].address] = ev[2]
+		ev[2].cursorX = 1
+		ev[2].cursorY = 1
+		if ev[2].address == rootscreen then
+			if not root_screen_ready then
+				root_screen_ready = true
+				if root_gpu_ready then
+					ev[2].cursorY = print("switching debug to console")
+					lazuli.register_event("debug_print")
+				end
+			end
+		else
+			local found = false
+			for _, gpu in pairs(gpus) do
+				local scr = gpu.getScreen()
+				if scr ~= ev[2].address then
+					gpu.bind(ev[2].address)
+				end
+				local w, h = gpu.getResolution()
+				gpu.fill(1, 1, w, h, " ")
+				if scr and scr ~= ev[2].address then
+					gpu.bind(scr)
+				end
+				found = true
+				break
+			end
+			if not found then
+				need_clear[ev[2].address] = true
+			end
+		end
+		print("Found screen:", ev[2].address)
+		rerender_input()
+	elseif ev[1] == "cast_rem_screen" then
+		screens[ev[2].address] = nil
 	end
 end

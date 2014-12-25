@@ -97,7 +97,6 @@ do -- Note that O() declarations ignore memory allocation.
 	-- Is there a higher-priority process than this priority?
 	function higher_scheduled(priority)
 		local highest = peek_highest()
-		-- print("higher_scheduled", highest and highest.priority, ">?", priority)
 		return highest and highest.priority > priority
 	end
 	function get_process(pid)
@@ -193,6 +192,8 @@ end
 
 do
 	local gpu = component.list("gpu")()
+	local screen = component.list("screen")()
+	component.invoke(gpu, "bind", screen)
 	local cursorY = 1
 	local w, h = component.invoke(gpu, "getResolution")
 	component.invoke(gpu, "fill", 1, 1, w, h, " ")
@@ -206,7 +207,7 @@ do
 		end
 		component.invoke(gpu, "set", 1, cursorY, table.concat(args, " ", 1, args.n))
 		cursorY = cursorY + 1
-		return cursorY
+		return cursorY, gpu, screen
 	end
 end
 
@@ -631,7 +632,7 @@ while processes_exist() and not shutdown_allowed do
 			-- TODO: proper error handling
 			print("process " .. active_process.pid .. " crashed:", err)
 		end
-		if coroutine.status(active_process.coroutine) == "dead" then
+		if coroutine.status(active_process.coroutine) == "dead" and not active_process.queued then
 			dealloc_process(active_process)
 		end
 	end
