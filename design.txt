@@ -8,11 +8,15 @@
 * Drivers [~]
 * Filesystem [x]
 * Simple shell [x]
+* Nonvolatile storage [~]
 * Real-time control [~]
 * Networking [ ]
 * Real-time debugging [ ]
 * Security [ ]
 * Remote access [ ]
+
+
+# WARNING: This document has not been kept up-to-date!
 
 
 # Multitasking is the core of an RTOS.

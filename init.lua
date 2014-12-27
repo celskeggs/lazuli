@@ -134,9 +134,22 @@ end
 
 -- event subsystem
 
-local event_check, event_sleep, event_register, event_unregister, event_send
+local event_check, event_sleep, event_register, event_unregister, event_send, event_exists, event_subscribe, event_unsubscribe
 do
 	local event_registry = {}
+	local subscribers = {}
+	function event_subscribe(pid)
+		table.insert(subscribers, pid)
+	end
+	function event_unsubscribe(pid)
+		for k, v in ipairs(subscribers) do
+			if v == pid then
+				table.remove(subscribers, k)
+				return
+			end
+		end
+		error("pid not subscribed to event updates: " .. tostring(pid))
+	end
 	local function event_handle(evt)
 		local target = event_registry[evt[1]]
 		if target then
@@ -160,6 +173,9 @@ do
 	function event_check()
 		event_sleep(0)
 	end
+	function event_exists(name)
+		return not not event_registry[name]
+	end
 	function event_send(pid, source, name, ...)
 		local data = table.pack(name, ...)
 		data.spid = source
@@ -181,10 +197,16 @@ do
 			assert(not get_process(event_registry[name]), "event already registered: " .. name .. " (to " .. pid .. ")")
 		end
 		event_registry[name] = pid
+		for i, pid in ipairs(subscribers) do
+			schedule(pid)
+		end
 	end
 	function event_unregister(name, pid)
 		assert(event_registry[name] == pid, "event not registered: " .. name)
 		event_registry[name] = nil
+		for i, pid in ipairs(subscribers) do
+			schedule(pid)
+		end
 	end
 end
 
@@ -486,6 +508,18 @@ function api.proc_serve_loop(procs, is_global, default)
 		else
 			default(event)
 		end
+	end
+end
+function api.event_wait(name, timeout)
+	if not event_exists(name) then
+		timer_start(timeout or 1000, active_process.pid)
+		event_subscribe(active_process.pid)
+		while not event_exists(name) do
+			api.process_block()
+		end
+		event_unsubscribe(active_process.pid)
+		timer_delete(active_process.pid)
+		assert(event_exists(name), "event_wait timed out on " .. name)
 	end
 end
 function api.pop_event()

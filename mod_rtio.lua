@@ -247,15 +247,25 @@ function conf_env.invert(chan)
 		error("invalid type to invert: " .. chan.type)
 	end
 end
-function conf_env.cell_bool(def)
+function conf_env.cell_bool(name, def)
+	assert(type(name) == "string", "cell_bool needs a valid name")
 	assert(def == true or def == false, "cell_bool needs a valid default")
 	local targets = {}
+	local value = nil
 	table.insert(initializers, function()
+		lazuli.event_wait("proc_nvget")
+		value = lazuli.proc_call(nil, "nvget", name, def)
 		for _, target in ipairs(targets) do
-			target(def)
+			target(value)
 		end
 	end)
 	return put_handle("bool_out", {set=function(v)
+		if v == value then return end
+		value = v
+		local succ, err = pcall(lazuli.proc_call, nil, "nvset", name, v)
+		if not succ then
+			warn("nvset failed: " .. tostring(err))
+		end
 		for _, target in ipairs(targets) do
 			target(v)
 		end
