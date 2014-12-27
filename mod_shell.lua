@@ -162,7 +162,7 @@ function commands.fload(path, priority)
 			buf = buf .. x
 		end
 		f.close()
-		print("spawned as", lazuli.spawn(buf, name, tonumber(priority) or 0, lazuli.get_param()))
+		print("spawned as", lazuli.spawn(buf, path, tonumber(priority) or 0, lazuli.get_param()))
 	end
 end
 help.fexec = "fexec <PATH> [PRIORITY]: load filesystem module and release console until exit"
@@ -199,6 +199,10 @@ function commands.rtio(name, cmd, ...)
 	if not lazuli.broadcast("cast_rtio", name, cmd, ...) then
 		print("no rtio endpoint responded")
 	end
+end
+help.pkill = "pkill <PID>: nicely kill a process"
+function commands.pkill(pid)
+	lazuli.pkill(tonumber(pid))
 end
 help.fed = "fed <PATH>: edit the specified file"
 function commands.fed(path)

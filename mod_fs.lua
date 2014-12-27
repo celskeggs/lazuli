@@ -175,11 +175,11 @@ end
 function fs.fremove(name)
 	local fs, path = raw_split(name)
 	if not fs then
-		error("cannot list " .. name .. ": " .. path)
+		error("cannot remove " .. name .. ": " .. path)
 	end
 	local succ, err = fs.remove(path)
 	if not succ then
-		error("cannot list " .. name .. ": " .. err)
+		error("cannot remove " .. name .. ": " .. tostring(err))
 	end
 end
 
@@ -199,6 +199,13 @@ function default_handle(event)
 		end
 	end
 end
+
 lazuli.register_event("cast_add_filesystem")
 lazuli.register_event("cast_rem_filesystem")
+
+while not fs.fexists("/boot") or not fs.fexists("/temp") do
+	lazuli.block_event()
+	default_handle(lazuli.pop_event())
+end
+
 lazuli.proc_serve_loop(fs, true, default_handle)

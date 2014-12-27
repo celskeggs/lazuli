@@ -71,7 +71,7 @@ do -- Note that O() declarations ignore memory allocation.
 	local next_pid = 0
 	function spark(main_function, source, priority, user_id, param)
 		local routine = coroutine.create(main_function)
-		local structure = {coroutine=routine, source=source, user_id=user_id, priority=priority, queued=false, param=param, event_queue={}, waiting={}, cputime=0}
+		local structure = {coroutine=routine, source=source, user_id=user_id, priority=priority, queued=false, param=param, event_queue={}, waiting={}, cputime=0, killing=false}
 		structure.pid = next_pid
 		next_pid = next_pid + 1
 		processes[structure.pid] = structure
@@ -566,7 +566,7 @@ end
 -- Always yield.
 function api.process_yield()
 	schedule(api.get_pid())
-	coroutine.yield(true)
+	api.process_block()
 end
 -- Yield if enough time has been spent.
 function api.check_process_yield()
@@ -580,6 +580,9 @@ end
 -- Blocking yield.
 function api.process_block()
 	coroutine.yield(true)
+	if active_process.killing then
+		error("process killed")
+	end
 end
 function api.halt(is_reboot)
 	assert(active_process.user_id == 0, "must be root to halt")
@@ -609,6 +612,12 @@ function api.boot_device()
 end
 function api.temp_device()
 	return computer.tmpAddress()
+end
+function api.pkill(pid)
+	local proc = get_process(pid)
+	assert(proc, "process does not exist: " .. tostring(pid))
+	proc.killing = true
+	schedule(pid)
 end
 
 function root_load(fname, priority, as_data)
